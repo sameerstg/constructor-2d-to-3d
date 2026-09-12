@@ -20,6 +20,12 @@ dependencies = [
     "scikit-image>=0.24",            # BSD-3  (skeletonize)
     "Pillow>=10.4",                  # MIT-CMU
 
+    # --- Vector CAD input ---
+    # DXF is the open interchange format both AutoCAD and Revit export, and it
+    # carries real units, layers and block references - so scale is exact and
+    # doors/windows are detectable. See docs/CAD-INPUT.md.
+    "ezdxf>=1.3",                    # MIT
+
     # --- 3D ---
     "trimesh>=4.5",                  # MIT
     "manifold3d>=2.5",               # Apache-2.0, robust mesh booleans for openings
@@ -31,6 +37,12 @@ dev = [
     "pytest>=8.3",
     "httpx>=0.27",       # TestClient
     "ruff>=0.7",
+
+    # Fixture generation only - never imported by the service. ezdxf's drawing
+    # addon renders real DXF entities through matplotlib, which is how the
+    # CAD-style raster test images are produced: genuine CAD linework rather
+    # than a hand-drawn imitation of it.
+    "matplotlib>=3.9",   # PSF-based, BSD-compatible
 ]
 
 [build-system]

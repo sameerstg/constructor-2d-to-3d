@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 
+import cv2
 import numpy as np
 import pytest
 import trimesh
@@ -24,20 +25,34 @@ from app.ir import (
     Room,
     Scale,
     ScaleSource,
+    Severity,
     Wall,
     WallType,
 )
 from app.main import app
 from app.recognize.base import RecognizerError
+from app.recognize.opencv_v1 import detect_rooms
 from app.recognize.registry import get_recognizer
 from app.recognize.skeleton import cluster_coordinates, merge_collinear, snap_to_axes
+from app.sources import SourceDocument
+from app.sources import load as load_source
 from app.synth import generate_plan
+
+
+def _as_png(image: np.ndarray, name: str = "plan.png") -> SourceDocument:
+    encoded = cv2.imencode(".png", image)[1].tobytes()
+    return load_source(name, encoded)
 
 
 @pytest.fixture(scope="module")
 def plan_image() -> np.ndarray:
     image, _ = generate_plan(with_clutter=True)
     return image
+
+
+@pytest.fixture(scope="module")
+def plan_doc(plan_image: np.ndarray) -> SourceDocument:
+    return _as_png(plan_image)
 
 
 @pytest.fixture(scope="module")
@@ -160,8 +175,8 @@ def test_segments_separated_by_a_doorway_do_not_merge():
 # --------------------------------------------------------------------------
 
 
-def test_recognizer_finds_walls_and_rooms(plan_image):
-    ir = get_recognizer("opencv").recognize(plan_image, filename="synthetic.png")
+def test_recognizer_finds_walls_and_rooms(plan_doc):
+    ir = get_recognizer("opencv").recognize(plan_doc)
     level = ir.levels[0]
 
     assert len(level.walls) >= 8, "should find the envelope plus the internal partitions"
@@ -170,20 +185,20 @@ def test_recognizer_finds_walls_and_rooms(plan_image):
     assert ir.provenance.recognizer == "opencv"
 
 
-def test_recognizer_ignores_furniture_and_text(plan_image):
+def test_recognizer_ignores_furniture_and_text(plan_doc):
     """Clutter is thin; walls are thick. Detection must not be inflated by it."""
     clean, _ = generate_plan(with_clutter=False)
     engine = get_recognizer("opencv")
 
-    cluttered_walls = len(engine.recognize(plan_image).levels[0].walls)
-    clean_walls = len(engine.recognize(clean).levels[0].walls)
+    cluttered_walls = len(engine.recognize(plan_doc).levels[0].walls)
+    clean_walls = len(engine.recognize(_as_png(clean)).levels[0].walls)
 
     assert cluttered_walls == clean_walls
 
 
-def test_recognizer_recovers_proportions(plan_image, truth):
+def test_recognizer_recovers_proportions(plan_doc, truth):
     """Absolute scale is a guess, but SHAPE should be close to ground truth."""
-    ir = get_recognizer("opencv").recognize(plan_image)
+    ir = get_recognizer("opencv").recognize(plan_doc)
     detected = sum(w.length for w in ir.levels[0].walls)
 
     # Normalise out the known scale error to compare proportions alone.
@@ -191,8 +206,8 @@ def test_recognizer_recovers_proportions(plan_image, truth):
     assert 0.75 <= corrected / truth.total_wall_length_m <= 1.25
 
 
-def test_supplied_scale_is_authoritative(plan_image):
-    ir = get_recognizer("opencv").recognize(plan_image, pixels_per_meter=80.0)
+def test_supplied_scale_is_authoritative(plan_doc):
+    ir = get_recognizer("opencv").recognize(plan_doc, pixels_per_meter=80.0)
     assert ir.scale.source is ScaleSource.MANUAL
     assert ir.scale.pixels_per_meter == 80.0
     assert ir.scale.confidence == 1.0
@@ -200,10 +215,10 @@ def test_supplied_scale_is_authoritative(plan_image):
     assert not any(w.code == "scale_is_a_guess" for w in ir.warnings)
 
 
-def test_guessed_scale_is_flagged_loudly(plan_image):
+def test_guessed_scale_is_flagged_loudly(plan_doc):
     """A silently wrong scale is the worst failure mode: everything downstream
     looks right and is the wrong size. It must always be reported."""
-    ir = get_recognizer("opencv").recognize(plan_image)
+    ir = get_recognizer("opencv").recognize(plan_doc)
     assert ir.scale.source is ScaleSource.HEURISTIC
     assert ir.scale.confidence < 0.5
     assert any(w.code == "scale_is_a_guess" for w in ir.warnings)
@@ -212,7 +227,7 @@ def test_guessed_scale_is_flagged_loudly(plan_image):
 def test_blank_image_is_rejected_not_guessed_at():
     blank = np.full((600, 800, 3), 255, dtype=np.uint8)
     with pytest.raises(RecognizerError):
-        get_recognizer("opencv").recognize(blank)
+        get_recognizer("opencv").recognize(_as_png(blank, "blank.png"))
 
 
 def test_unknown_recognizer_names_the_alternatives():
@@ -306,8 +321,6 @@ def test_health_lists_recognizers(client: TestClient):
 
 
 def test_recognize_endpoint_returns_camel_case_ir(client: TestClient, plan_image):
-    import cv2
-
     encoded = cv2.imencode(".png", plan_image)[1].tobytes()
     response = client.post(
         "/recognize", files={"file": ("plan.png", encoded, "image/png")}
@@ -320,17 +333,17 @@ def test_recognize_endpoint_returns_camel_case_ir(client: TestClient, plan_image
     assert body["source"]["filename"] == "plan.png"
 
 
-def test_recognize_rejects_a_non_image(client: TestClient):
+def test_recognize_rejects_an_unrecognised_file(client: TestClient):
+    """415, not 400: the upload is intact, we just have no reader for it. The
+    message lists what we DO accept, which is the only actionable thing."""
     response = client.post(
         "/recognize", files={"file": ("notes.txt", b"this is not a png", "text/plain")}
     )
-    assert response.status_code == 400
-    assert "image" in response.json()["detail"].lower()
+    assert response.status_code == 415
+    assert "DXF" in response.json()["detail"]
 
 
 def test_recognize_rejects_an_unusable_image(client: TestClient):
-    import cv2
-
     blank = np.full((400, 400, 3), 255, dtype=np.uint8)
     encoded = cv2.imencode(".png", blank)[1].tobytes()
     response = client.post(
@@ -352,3 +365,74 @@ def test_extrude_endpoint_returns_glb(client: TestClient, simple_ir: FloorPlanIR
 def test_extrude_rejects_a_malformed_ir(client: TestClient):
     response = client.post("/extrude", json={"nonsense": True})
     assert response.status_code == 422
+
+
+# --------------------------------------------------------------------------
+# Robustness on real-world drawings
+#
+# These lock in fixes for failures found by running real floor plans through
+# the pipeline. Each one returned plausible-looking output while being badly
+# wrong, which is the failure mode synthetic fixtures do not catch.
+# --------------------------------------------------------------------------
+
+
+def _room_mask(width=400, height=300, thickness=8, door_px=36):
+    """Two rooms separated by a wall with a doorway gap.
+
+    `door_px` is a realistic door at the scale the test passes in: 36px at
+    40 px/m is 0.9m. A wider gap is correctly read as an open-plan threshold
+    rather than a door, and is deliberately NOT bridged.
+    """
+    mask = np.zeros((height, width), dtype=np.uint8)
+    cv2.rectangle(mask, (20, 20), (width - 20, height - 20), 255, thickness)
+    mid, half = width // 2, door_px // 2
+    cv2.line(mask, (mid, 20), (mid, height // 2 - half), 255, thickness)
+    cv2.line(mask, (mid, height // 2 + half), (mid, height - 20), 255, thickness)
+    return mask
+
+
+def test_room_detection_survives_a_wrong_scale_estimate():
+    """Room thresholds must not be hostage to the scale guess.
+
+    Deriving the minimum room area from pixels-per-metre scales the error by its
+    SQUARE, so a 3x scale over-estimate discards every real room. Real plans
+    returned zero rooms for exactly this reason while synthetics looked fine.
+    """
+    mask = _room_mask()
+    half_width = 4.0
+
+    honest = detect_rooms(mask, 40.0, wall_half_width_px=half_width)
+    # Same drawing, same measured thickness, wildly wrong metre scale.
+    overestimated = detect_rooms(mask, 400.0, wall_half_width_px=half_width)
+
+    assert len(honest) >= 2
+    assert len(overestimated) == len(honest)
+
+
+def test_metre_thresholds_still_used_when_scale_is_exact():
+    """DXF states its units, so metres are the better unit there."""
+    rooms = detect_rooms(_room_mask(), 40.0)
+    assert len(rooms) >= 2
+
+
+def test_hairline_linework_is_reported_not_silently_guessed():
+    """An unfilled CAD plot draws walls as two hairlines with nothing between.
+
+    Wall thickness is then unmeasurable, so scale and geometry are built on a
+    number at its floor. The recognizer may still emit something, but it must
+    say the output is untrustworthy and point at the DXF.
+    """
+    image = np.full((900, 1200, 3), 255, dtype=np.uint8)
+    # Hollow double-line walls: an outline, not a filled stroke.
+    for inset in (0, 6):
+        cv2.rectangle(image, (100 + inset, 100 + inset), (1100 - inset, 800 - inset), (0, 0, 0), 1)
+    cv2.line(image, (600, 100), (600, 800), (0, 0, 0), 1)
+    cv2.line(image, (606, 100), (606, 800), (0, 0, 0), 1)
+
+    ir = get_recognizer("opencv").recognize(_as_png(image, "hollow.png"))
+    codes = [w.code for w in ir.warnings]
+    assert "hairline_linework" in codes
+
+    warning = next(w for w in ir.warnings if w.code == "hairline_linework")
+    assert warning.severity is Severity.ERROR
+    assert "DXF" in warning.message

@@ -1,0 +1,50 @@
+{
+  "autocad_style.png": {
+    "style": "autocad_style",
+    "rendered_from": "dxf",
+    "pixels_per_meter": null,
+    "wall_thickness_m": {
+      "exterior": 0.3,
+      "interior": 0.1
+    },
+    "room_count": 5,
+    "door_count": 4,
+    "window_count": 6,
+    "total_wall_length_m": 69.78,
+    "building_size_m": [
+      12.0,
+      9.0
+    ],
+    "rooms": [
+      "LIVING",
+      "KITCHEN",
+      "CORRIDOR",
+      "BED 1",
+      "BED 2"
+    ]
+  },
+  "revit_style.png": {
+    "style": "revit_style",
+    "rendered_from": "dxf",
+    "pixels_per_meter": null,
+    "wall_thickness_m": {
+      "exterior": 0.3,
+      "interior": 0.1
+    },
+    "room_count": 5,
+    "door_count": 4,
+    "window_count": 6,
+    "total_wall_length_m": 69.78,
+    "building_size_m": [
+      12.0,
+      9.0
+    ],
+    "rooms": [
+      "LIVING",
+      "KITCHEN",
+      "CORRIDOR",
+      "BED 1",
+      "BED 2"
+    ]
+  }
+}

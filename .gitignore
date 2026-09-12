@@ -37,3 +37,6 @@ Thumbs.db
 
 # local toolchain workarounds (C: was full; npm cache redirected here)
 .npm-cache/
+
+# scoring-harness output (python -m app.evaluate --glb)
+samples/glb/

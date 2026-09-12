@@ -16,15 +16,19 @@ from __future__ import annotations
 
 import logging
 
-import cv2
-import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.extrude.gltf import ExtrusionError, export_glb
 from app.ir import FloorPlanIR
 from app.recognize.base import RecognizerError
-from app.recognize.registry import available_recognizers, get_recognizer
+from app.recognize.registry import (
+    UnsupportedSourceError,
+    available_recognizers,
+    route,
+    supported_kinds,
+)
+from app.sources import load as load_source
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +54,11 @@ app.add_middleware(
 
 @app.get("/health")
 def health() -> dict[str, object]:
-    return {"status": "ok", "recognizers": available_recognizers()}
+    return {
+        "status": "ok",
+        "recognizers": available_recognizers(),
+        "supportedKinds": supported_kinds(),
+    }
 
 
 @app.get("/schema")
@@ -61,13 +69,15 @@ def schema() -> dict:
 
 @app.post("/recognize", response_model=FloorPlanIR, response_model_by_alias=True)
 async def recognize(
-    file: UploadFile = File(..., description="Floor plan image (PNG, JPEG, WebP, BMP)"),
+    file: UploadFile = File(
+        ..., description="Floor plan: DXF, or a raster image (PNG, JPEG, WebP, BMP, TIFF)"
+    ),
     recognizer: str | None = Form(
-        default=None, description="Recognizer key; see GET /health"
+        default=None, description="Recognizer key; see GET /health. Omit to auto-route."
     ),
     pixels_per_meter: float | None = Form(
         default=None,
-        description="Known scale. When supplied it is authoritative and no scale is inferred.",
+        description="Known scale for raster input. Ignored for DXF, which states its units.",
     ),
 ) -> FloorPlanIR:
     raw = await file.read()
@@ -79,27 +89,23 @@ async def recognize(
             detail=f"File is {len(raw) / 1e6:.1f}MB; the limit is {MAX_UPLOAD_BYTES / 1e6:.0f}MB.",
         )
 
-    image = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
-    if image is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Could not decode that file as an image. PDF input is not supported yet.",
-        )
-
     if pixels_per_meter is not None and pixels_per_meter <= 0:
         raise HTTPException(status_code=400, detail="pixels_per_meter must be positive.")
 
-    try:
-        engine = get_recognizer(recognizer)
-    except KeyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    document = load_source(file.filename or "upload", raw)
 
     try:
-        return engine.recognize(
-            image,
-            filename=file.filename or "upload",
-            pixels_per_meter=pixels_per_meter,
-        )
+        engine = route(document, recognizer)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except UnsupportedSourceError as exc:
+        # 415: the file is intact and identifiable, we just cannot read that
+        # format. The message says how to convert it, which is the only useful
+        # thing we can offer for a proprietary DWG or RVT.
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+
+    try:
+        return engine.recognize(document, pixels_per_meter=pixels_per_meter)
     except RecognizerError as exc:
         # The image decoded but is not usable as a floor plan. That is a problem
         # with the input, so report it as one and say what would help.

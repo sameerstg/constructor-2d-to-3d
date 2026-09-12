@@ -30,7 +30,12 @@ export default function PlanOverlay({
   onCalibrate,
 }: {
   ir: FloorPlanIR;
-  imageUrl: string;
+  /**
+   * The source drawing to superimpose on. Null for vector input (DXF), which
+   * has no raster to show — the recognised geometry IS the drawing there, and
+   * it is exact rather than something to be checked against a background.
+   */
+  imageUrl: string | null;
   levelIndex?: number;
   selectedWallId?: string | null;
   onSelectWall?: (id: string) => void;
@@ -84,6 +89,10 @@ export default function PlanOverlay({
   };
 
   const scaleIsGuessed = ir.scale.source === "assumed" || ir.scale.source === "heuristic";
+  // Calibration needs a drawing to measure against. It is also pointless when
+  // the source stated its own units, where "correcting" the scale could only
+  // introduce error.
+  const canCalibrate = imageUrl !== null && scaleIsGuessed;
 
   return (
     <div className="flex h-full flex-col">
@@ -98,19 +107,26 @@ export default function PlanOverlay({
               Scale is estimated
             </span>
           )}
-          <button
-            onClick={() => {
-              setCalibrating((c) => !c);
-              setPoints([]);
-            }}
-            className={`rounded px-3 py-1.5 text-xs font-medium transition ${
-              calibrating
-                ? "bg-amber-500 text-black"
-                : "bg-white/10 text-white hover:bg-white/20"
-            }`}
-          >
-            {calibrating ? "Cancel" : "Calibrate scale"}
-          </button>
+          {!scaleIsGuessed && (
+            <span className="rounded bg-emerald-500/15 px-2 py-1 text-xs text-emerald-300">
+              Scale is exact
+            </span>
+          )}
+          {canCalibrate && (
+            <button
+              onClick={() => {
+                setCalibrating((c) => !c);
+                setPoints([]);
+              }}
+              className={`rounded px-3 py-1.5 text-xs font-medium transition ${
+                calibrating
+                  ? "bg-amber-500 text-black"
+                  : "bg-white/10 text-white hover:bg-white/20"
+              }`}
+            >
+              {calibrating ? "Cancel" : "Calibrate scale"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -149,8 +165,17 @@ export default function PlanOverlay({
       {/* drawing */}
       <div className="relative flex-1 overflow-auto bg-neutral-900 p-4">
         <div className="relative mx-auto w-full max-w-4xl">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={imageUrl} alt="Uploaded floor plan" className="block w-full" />
+          {imageUrl ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img src={imageUrl} alt="Uploaded floor plan" className="block w-full" />
+          ) : (
+            /* Vector source: nothing to superimpose on, so the SVG below sizes
+               itself from the plan's own aspect ratio over a blank sheet. */
+            <div
+              className="w-full bg-neutral-100"
+              style={{ aspectRatio: `${width} / ${height}` }}
+            />
+          )}
 
           <svg
             ref={svgRef}

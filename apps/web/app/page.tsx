@@ -43,11 +43,16 @@ export default function Home() {
     setError(null);
     setSelectedWallId(null);
 
+    // Only rasters have something to show behind the recognised geometry. A DXF
+    // is vector data the browser cannot render as an image, so the review view
+    // draws the IR on its own.
+    const isRaster = file.type.startsWith("image/");
+
     // Revoke the previous object URL before replacing it, or every upload in a
     // session leaks its image.
     setImageUrl((previous) => {
       if (previous) URL.revokeObjectURL(previous);
-      return URL.createObjectURL(file);
+      return isRaster ? URL.createObjectURL(file) : null;
     });
 
     const form = new FormData();
@@ -134,7 +139,7 @@ export default function Home() {
         <input
           ref={inputRef}
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/bmp"
+          accept=".dxf,image/png,image/jpeg,image/webp,image/bmp,image/tiff"
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];
@@ -163,7 +168,7 @@ export default function Home() {
             </Centered>
           )}
 
-          {status === "ready" && ir && imageUrl && tab === "review" && (
+          {status === "ready" && ir && tab === "review" && (
             <PlanOverlay
               ir={ir}
               imageUrl={imageUrl}
@@ -241,19 +246,35 @@ export default function Home() {
 
 // ---------------------------------------------------------------------------
 
-/** Bundled demo plans, so the tool can be tried before any real plan exists. */
+/** Bundled demo plans, so the tool can be tried before any real plan exists.
+ *
+ * Ordered best-case first. The spread is deliberate: DXF is exact, a Revit plot
+ * is recognisable because its walls are filled solid, an AutoCAD plot is the
+ * hard case because its walls are hollow outlines, and the real plans are what
+ * actually turns up in an inbox.
+ */
 const SAMPLES = [
-  { label: "Sample plan", path: "/samples/synthetic_cluttered.png" },
-  { label: "Sample (clean)", path: "/samples/synthetic_clean.png" },
+  { label: "DXF (CAD)", path: "/samples/synthetic_cad.dxf", type: "" },
+  { label: "Revit plot", path: "/samples/revit_style.png", type: "image/png" },
+  { label: "AutoCAD plot", path: "/samples/autocad_style.png", type: "image/png" },
+  { label: "Real plan", path: "/samples/images.png", type: "image/png" },
+  {
+    label: "Real plan (dense)",
+    path: "/samples/cedreo-en_2d-floor-plan-WB_apartment-01.webp",
+    type: "image/webp",
+  },
 ];
 
 function Dropzone({ onFile }: { onFile: (file: File) => void }) {
   const [dragging, setDragging] = useState(false);
 
-  const loadSample = async (path: string) => {
-    const response = await fetch(path);
+  const loadSample = async (sample: (typeof SAMPLES)[number]) => {
+    const response = await fetch(sample.path);
     const blob = await response.blob();
-    onFile(new File([blob], path.split("/").pop() ?? "sample.png", { type: blob.type }));
+    const name = sample.path.split("/").pop() ?? "sample";
+    // A dev server serves .dxf as octet-stream or text/plain; pin the type so
+    // the raster-vs-vector check downstream is not at the mercy of that.
+    onFile(new File([blob], name, { type: sample.type }));
   };
 
   return (
@@ -278,13 +299,14 @@ function Dropzone({ onFile }: { onFile: (file: File) => void }) {
       >
         <p className="text-base font-medium">Drop a floor plan here</p>
         <p className="mt-2 max-w-sm text-xs leading-relaxed text-neutral-500">
-          PNG, JPEG or WebP. Works best on clean line drawings with solid walls.
+          DXF from AutoCAD or Revit gives exact dimensions, doors and room names.
+          Raster scans (PNG, JPEG, WebP) also work, with estimated scale.
         </p>
         <div className="mt-6 flex gap-2">
           {SAMPLES.map((sample) => (
             <button
               key={sample.path}
-              onClick={() => loadSample(sample.path)}
+              onClick={() => loadSample(sample)}
               className="rounded-md bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20"
             >
               {sample.label}

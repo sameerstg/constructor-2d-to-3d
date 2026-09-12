@@ -43,6 +43,7 @@ from app.ir import (
 )
 from app.recognize.base import RecognizerError
 from app.recognize.skeleton import skeleton_to_segments
+from app.sources import SourceDocument, SourceKind
 
 NAME = "opencv"
 VERSION = "1.0.0"
@@ -68,6 +69,22 @@ MAX_WORKING_EDGE = 2000
 # anything is not.
 ASSUMED_WALL_THICKNESS_M = 0.20
 
+# Percentile used for the FIRST, rough thickness measurement, over raw ink.
+#
+# 60, not 80. Wall half-widths form two populations - thin interior partitions
+# and a thick exterior perimeter - and on a drawing with solid-filled walls and
+# generous margins the 80th percentile lands inside the EXTERIOR population.
+# The wall mask is then cut at 0.6x that figure, which deletes every interior
+# partition and leaves only the envelope: a Revit-style plot returned 4 walls
+# instead of 14 for exactly this reason. Measured across every sample, 60
+# recovers those partitions (4 -> 14 walls, matching ground truth) and changes
+# nothing on the synthetic plans.
+ROUGH_THICKNESS_PERCENTILE = 60
+
+# Below this, the "walls" are hairlines rather than filled strokes, so thickness
+# has hit the resolution floor and everything derived from it is unreliable.
+HAIRLINE_HALF_WIDTH_PX = 2.5
+
 # A room smaller than this is a cupboard, a hatch pattern, or noise.
 MIN_ROOM_AREA_M2 = 1.2
 
@@ -79,22 +96,46 @@ MIN_WALL_LENGTH_M = 0.35
 # door, and bridging it would invent a wall that is not there.
 MAX_DOOR_WIDTH_M = 1.1
 
+# Scale-free equivalents of the two constants above, in units of WALL THICKNESS.
+# Preferred for raster input because wall thickness is measured off the image
+# while the metre scale is only guessed.
+#
+# 7.0 was chosen by sweeping 4.5-9.0 over every sample, synthetic and real, and
+# counting rooms recovered. It is a genuine optimum, not a round number: below
+# it, doorways in real plans stay open and whole floors leak into the exterior
+# component; above it, the closing kernel swallows small rooms outright and
+# low-resolution plans lose every room at 9.0.
+DOOR_WIDTH_IN_WALL_THICKNESSES = 7.0
+
+# A room is at least ~6 wall thicknesses across (1.2m for a 0.2m wall), which
+# matches MIN_ROOM_AREA_M2 on a conventionally drawn plan but survives a bad
+# scale estimate.
+MIN_ROOM_SIDE_IN_WALL_THICKNESSES = 6.0
+
 
 class OpenCVRecognizer:
-    """Implements the `Recognizer` protocol."""
+    """Implements the `Recognizer` protocol for raster images."""
 
     name = NAME
     version = VERSION
+    accepts = frozenset({SourceKind.RASTER})
 
     def recognize(
         self,
-        image: np.ndarray,
+        document: SourceDocument,
         *,
-        filename: str = "upload",
         pixels_per_meter: float | None = None,
     ) -> FloorPlanIR:
         started = time.perf_counter()
         warnings: list[Warning] = []
+
+        image = cv2.imdecode(np.frombuffer(document.data, np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            raise RecognizerError(
+                "Could not decode that file as an image. Supported raster formats "
+                "are PNG, JPEG, WebP, BMP and TIFF."
+            )
+        filename = document.filename
 
         original_height, original_width = image.shape[:2]
         working, downscale = _fit_working_size(image)
@@ -116,7 +157,16 @@ class OpenCVRecognizer:
         # to separate walls from text so the wall mask can be built. The second
         # runs on that mask, where the thin clutter is gone, and yields the
         # typical wall thickness that scale and geometry are derived from.
-        rough_half_width_px = _estimate_wall_half_width(ink, percentile=80)
+        rough_half_width_px = _estimate_wall_half_width(ink, percentile=ROUGH_THICKNESS_PERCENTILE)
+        if rough_half_width_px <= HAIRLINE_HALF_WIDTH_PX:
+            # A 1px half-width is not a measurement of anything: at that size the
+            # low percentile is reading anti-aliasing on hairline linework, not
+            # wall thickness. Fall back to the conservative estimate, which at
+            # least suppresses some of the furniture and annotation. Drawings
+            # with genuinely filled walls never reach this branch.
+            rough_half_width_px = max(
+                rough_half_width_px, _estimate_wall_half_width(ink, percentile=80)
+            )
         if rough_half_width_px < 1.0:
             raise RecognizerError(
                 "No wall-like structures found. The drawing may be too low "
@@ -137,6 +187,27 @@ class OpenCVRecognizer:
         half_width_px = _estimate_wall_half_width(wall_mask, percentile=25)
         if half_width_px < 1.0:
             half_width_px = rough_half_width_px
+
+        if half_width_px <= HAIRLINE_HALF_WIDTH_PX:
+            # Two very different drawings land here: an unfilled CAD plot, where
+            # walls are drawn as two hairlines with nothing between them, and a
+            # low-resolution scan. In both, wall thickness cannot be measured,
+            # so scale, wall geometry and the room thresholds derived from it
+            # are all built on a number at its floor. Say so plainly rather than
+            # emitting confident nonsense.
+            warnings.append(
+                Warning(
+                    code="hairline_linework",
+                    severity=Severity.ERROR,
+                    message=(
+                        "Walls in this drawing are thin outlines, not filled strokes, "
+                        "so their thickness could not be measured. Expect spurious "
+                        "walls from furniture and annotation, and unreliable rooms. "
+                        "If this plan came from AutoCAD or Revit, upload the DXF "
+                        "instead - it carries exact wall thicknesses."
+                    ),
+                )
+            )
 
         # --- scale ---------------------------------------------------------
         # Resolve scale before converting anything, so there is exactly one
@@ -202,7 +273,7 @@ class OpenCVRecognizer:
         ]
 
         # --- rooms ---------------------------------------------------------
-        rooms = _detect_rooms(wall_mask, working_ppm)
+        rooms = detect_rooms(wall_mask, working_ppm, wall_half_width_px=half_width_px)
         if not rooms:
             warnings.append(
                 Warning(
@@ -399,7 +470,12 @@ def _drop_small_components(mask: np.ndarray, *, min_area: int) -> np.ndarray:
     return cleaned
 
 
-def _detect_rooms(wall_mask: np.ndarray, pixels_per_meter: float) -> list[Room]:
+def detect_rooms(
+    wall_mask: np.ndarray,
+    pixels_per_meter: float,
+    *,
+    wall_half_width_px: float | None = None,
+) -> list[Room]:
     """Find enclosed floor regions as the connected components of free space.
 
     Free space is everything that is not wall. Components touching the image
@@ -407,13 +483,35 @@ def _detect_rooms(wall_mask: np.ndarray, pixels_per_meter: float) -> list[Room]:
     surrounding page, and it is why the wall mask had its door gaps bridged
     first: one unbridged doorway on the outer wall leaks the whole interior into
     the exterior component and every room disappears at once.
+
+    Two thresholds decide everything here: how wide a gap counts as a doorway,
+    and how small a region counts as a room. Expressing them in METRES makes
+    both hostage to the scale estimate -- and on a real drawing that estimate can
+    be off by 2-3x, which scales the area threshold by its SQUARE and silently
+    discards every genuine room. That is exactly how this returned zero rooms on
+    real-world plans while looking fine on synthetics.
+
+    So when the caller can supply a MEASURED wall half-width, both thresholds are
+    derived from it instead. Wall thickness is read directly off the image and is
+    reliable; the metre scale is not. A doorway is ~4-10x the wall thickness and
+    a room is at least a few thicknesses across, whatever the drawing's scale.
+
+    `wall_half_width_px` should be omitted only when `pixels_per_meter` is known
+    exactly -- from a DXF's stated units, say -- where metres are the better unit.
     """
-    sealed = _bridge_door_gaps(wall_mask, gap_px=int(round(MAX_DOOR_WIDTH_M * pixels_per_meter)))
+    if wall_half_width_px and wall_half_width_px > 0:
+        thickness_px = wall_half_width_px * 2
+        gap_px = int(round(DOOR_WIDTH_IN_WALL_THICKNESSES * thickness_px))
+        min_area_px = (MIN_ROOM_SIDE_IN_WALL_THICKNESSES * thickness_px) ** 2
+    else:
+        gap_px = int(round(MAX_DOOR_WIDTH_M * pixels_per_meter))
+        min_area_px = MIN_ROOM_AREA_M2 * (pixels_per_meter**2)
+
+    sealed = _bridge_door_gaps(wall_mask, gap_px=gap_px)
     free_space = cv2.bitwise_not(sealed)
     count, labels, stats, _ = cv2.connectedComponentsWithStats(free_space, connectivity=4)
 
     border_labels = set(labels[0, :]) | set(labels[-1, :]) | set(labels[:, 0]) | set(labels[:, -1])
-    min_area_px = MIN_ROOM_AREA_M2 * (pixels_per_meter**2)
 
     rooms: list[Room] = []
     for label in range(1, count):
