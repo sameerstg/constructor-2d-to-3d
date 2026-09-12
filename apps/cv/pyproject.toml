@@ -1,0 +1,54 @@
+[project]
+name = "constructor-cv"
+version = "0.1.0"
+description = "Floor plan recognition and 3D extrusion service for the XR Home platform"
+requires-python = ">=3.11,<3.13"
+
+dependencies = [
+    # --- API ---
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.12",   # multipart form uploads
+    "pydantic>=2.9",
+
+    # --- Computer vision / geometry ---
+    # All permissively licensed. See docs/LICENSING.md before adding anything
+    # trained on CubiCasa5K (CC BY-NC 4.0) or Ultralytics YOLO (AGPL-3.0).
+    "opencv-python-headless>=4.10",  # Apache-2.0
+    "numpy>=1.26",                   # BSD-3
+    "shapely>=2.0",                  # BSD-3
+    "scikit-image>=0.24",            # BSD-3  (skeletonize)
+    "Pillow>=10.4",                  # MIT-CMU
+
+    # --- 3D ---
+    "trimesh>=4.5",                  # MIT
+    "manifold3d>=2.5",               # Apache-2.0, robust mesh booleans for openings
+    "mapbox-earcut>=1.0",            # ISC, polygon triangulation for floors
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.27",       # TestClient
+    "ruff>=0.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# B008 forbids function calls in argument defaults, but `File(...)` and
+# `Form(...)` in a signature IS the FastAPI dependency-injection idiom.
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

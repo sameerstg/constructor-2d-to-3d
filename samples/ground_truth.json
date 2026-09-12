@@ -1,0 +1,114 @@
+{
+  "synthetic_clean.png": {
+    "pixels_per_meter": 80.0,
+    "wall_thickness_m": 0.2,
+    "room_count": 5,
+    "total_wall_length_m": 60.913,
+    "rooms": [
+      {
+        "name": "LIVING",
+        "approx_area_m2": 17.264
+      },
+      {
+        "name": "KITCHEN",
+        "approx_area_m2": 17.264
+      },
+      {
+        "name": "CORRIDOR",
+        "approx_area_m2": 13.15375
+      },
+      {
+        "name": "BED 1",
+        "approx_area_m2": 17.333056
+      },
+      {
+        "name": "BED 2",
+        "approx_area_m2": 17.333056
+      }
+    ]
+  },
+  "synthetic_cluttered.png": {
+    "pixels_per_meter": 80.0,
+    "wall_thickness_m": 0.2,
+    "room_count": 5,
+    "total_wall_length_m": 60.913,
+    "rooms": [
+      {
+        "name": "LIVING",
+        "approx_area_m2": 17.264
+      },
+      {
+        "name": "KITCHEN",
+        "approx_area_m2": 17.264
+      },
+      {
+        "name": "CORRIDOR",
+        "approx_area_m2": 13.15375
+      },
+      {
+        "name": "BED 1",
+        "approx_area_m2": 17.333056
+      },
+      {
+        "name": "BED 2",
+        "approx_area_m2": 17.333056
+      }
+    ]
+  },
+  "synthetic_thin_walls.png": {
+    "pixels_per_meter": 80.0,
+    "wall_thickness_m": 0.12,
+    "room_count": 5,
+    "total_wall_length_m": 60.913,
+    "rooms": [
+      {
+        "name": "LIVING",
+        "approx_area_m2": 17.264
+      },
+      {
+        "name": "KITCHEN",
+        "approx_area_m2": 17.264
+      },
+      {
+        "name": "CORRIDOR",
+        "approx_area_m2": 13.15375
+      },
+      {
+        "name": "BED 1",
+        "approx_area_m2": 17.333056
+      },
+      {
+        "name": "BED 2",
+        "approx_area_m2": 17.333056
+      }
+    ]
+  },
+  "synthetic_low_res.png": {
+    "pixels_per_meter": 40.0,
+    "wall_thickness_m": 0.2,
+    "room_count": 5,
+    "total_wall_length_m": 48.425,
+    "rooms": [
+      {
+        "name": "LIVING",
+        "approx_area_m2": 10.9375
+      },
+      {
+        "name": "KITCHEN",
+        "approx_area_m2": 10.9375
+      },
+      {
+        "name": "CORRIDOR",
+        "approx_area_m2": 8.53125
+      },
+      {
+        "name": "BED 1",
+        "approx_area_m2": 11.046875
+      },
+      {
+        "name": "BED 2",
+        "approx_area_m2": 11.046875
+      }
+    ]
+  }
+}

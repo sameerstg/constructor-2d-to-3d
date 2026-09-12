@@ -1,0 +1,531 @@
+{
+  "$defs": {
+    "Level": {
+      "additionalProperties": false,
+      "description": "One storey. The MVP emits exactly one, but the shape is already\nmulti-storey ready so Phase 3's multi-floor work is additive rather than\na schema migration.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "default": "Ground Floor",
+          "title": "Name",
+          "type": "string"
+        },
+        "elevation": {
+          "default": 0.0,
+          "title": "Elevation",
+          "type": "number"
+        },
+        "wallHeight": {
+          "default": 2.7,
+          "exclusiveMinimum": 0,
+          "maximum": 10.0,
+          "title": "Wallheight",
+          "type": "number"
+        },
+        "walls": {
+          "items": {
+            "$ref": "#/$defs/Wall"
+          },
+          "title": "Walls",
+          "type": "array"
+        },
+        "openings": {
+          "items": {
+            "$ref": "#/$defs/Opening"
+          },
+          "title": "Openings",
+          "type": "array"
+        },
+        "rooms": {
+          "items": {
+            "$ref": "#/$defs/Room"
+          },
+          "title": "Rooms",
+          "type": "array"
+        }
+      },
+      "title": "Level",
+      "type": "object"
+    },
+    "Opening": {
+      "additionalProperties": false,
+      "description": "A door or window, positioned ALONG a wall rather than in world space.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "wallId": {
+          "title": "Wallid",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/OpeningType",
+          "default": "door"
+        },
+        "offset": {
+          "minimum": 0,
+          "title": "Offset",
+          "type": "number"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "maximum": 10.0,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "default": 2.1,
+          "exclusiveMinimum": 0,
+          "maximum": 10.0,
+          "title": "Height",
+          "type": "number"
+        },
+        "sill": {
+          "default": 0.0,
+          "minimum": 0,
+          "title": "Sill",
+          "type": "number"
+        },
+        "swing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SwingDirection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "wallId",
+        "offset",
+        "width"
+      ],
+      "title": "Opening",
+      "type": "object"
+    },
+    "OpeningType": {
+      "enum": [
+        "door",
+        "window",
+        "opening"
+      ],
+      "title": "OpeningType",
+      "type": "string"
+    },
+    "Provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "recognizer": {
+          "title": "Recognizer",
+          "type": "string"
+        },
+        "recognizerVersion": {
+          "title": "Recognizerversion",
+          "type": "string"
+        },
+        "generatedAt": {
+          "format": "date-time",
+          "title": "Generatedat",
+          "type": "string"
+        },
+        "durationMs": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Durationms"
+        }
+      },
+      "required": [
+        "recognizer",
+        "recognizerVersion"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "Room": {
+      "additionalProperties": false,
+      "description": "An enclosed floor region. Polygon is a simple ring, no self-intersection.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "type": {
+          "$ref": "#/$defs/RoomType",
+          "default": "unknown"
+        },
+        "polygon": {
+          "items": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "minItems": 3,
+          "title": "Polygon",
+          "type": "array"
+        },
+        "area": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Area"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "polygon"
+      ],
+      "title": "Room",
+      "type": "object"
+    },
+    "RoomType": {
+      "enum": [
+        "unknown",
+        "living",
+        "kitchen",
+        "dining",
+        "bedroom",
+        "bathroom",
+        "hall",
+        "corridor",
+        "storage",
+        "garage",
+        "balcony",
+        "stairs"
+      ],
+      "title": "RoomType",
+      "type": "string"
+    },
+    "Scale": {
+      "additionalProperties": false,
+      "description": "Pixel-to-metre calibration. A wrong scale ruins everything downstream.",
+      "properties": {
+        "pixelsPerMeter": {
+          "exclusiveMinimum": 0,
+          "title": "Pixelspermeter",
+          "type": "number"
+        },
+        "source": {
+          "$ref": "#/$defs/ScaleSource",
+          "default": "assumed"
+        },
+        "confidence": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "pixelsPerMeter"
+      ],
+      "title": "Scale",
+      "type": "object"
+    },
+    "ScaleSource": {
+      "description": "How we arrived at the pixels-per-metre figure, worst to best.",
+      "enum": [
+        "assumed",
+        "heuristic",
+        "ocr",
+        "manual"
+      ],
+      "title": "ScaleSource",
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "warn",
+        "error"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "SourceImage": {
+      "additionalProperties": false,
+      "properties": {
+        "filename": {
+          "title": "Filename",
+          "type": "string"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        }
+      },
+      "required": [
+        "filename",
+        "width",
+        "height"
+      ],
+      "title": "SourceImage",
+      "type": "object"
+    },
+    "SwingDirection": {
+      "enum": [
+        "left",
+        "right"
+      ],
+      "title": "SwingDirection",
+      "type": "string"
+    },
+    "Wall": {
+      "additionalProperties": false,
+      "description": "A wall segment, stored as a CENTRELINE plus a thickness.\n\nCentreline rather than two faces because it makes junctions tractable:\nwalls sharing an endpoint miter cleanly, and dragging a corner in the\neditor moves every wall that meets there.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "start": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Start",
+          "type": "array"
+        },
+        "end": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "End",
+          "type": "array"
+        },
+        "thickness": {
+          "default": 0.2,
+          "exclusiveMinimum": 0,
+          "maximum": 2.0,
+          "title": "Thickness",
+          "type": "number"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 10.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height"
+        },
+        "type": {
+          "$ref": "#/$defs/WallType",
+          "default": "interior"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "Wall",
+      "type": "object"
+    },
+    "WallType": {
+      "enum": [
+        "exterior",
+        "interior",
+        "partition"
+      ],
+      "title": "WallType",
+      "type": "string"
+    },
+    "Warning": {
+      "additionalProperties": false,
+      "description": "Something the recognizer wants a human to look at.\n\nThese drive the review editor's worklist. A recognizer that emits honest\nwarnings is far more useful than one that silently guesses.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity",
+          "default": "warn"
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ref"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "Warning",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The complete intermediate representation of one floor plan.\n\nThis is the \"shared scene data package\" from the platform proposal: the web\nconfigurator edits it, the extruder turns it into geometry, and the VR\nclient reads from it. Everything downstream depends on this shape.",
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schemaversion",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "default": "Untitled Plan",
+      "title": "Name",
+      "type": "string"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SourceImage"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "scale": {
+      "$ref": "#/$defs/Scale"
+    },
+    "levels": {
+      "items": {
+        "$ref": "#/$defs/Level"
+      },
+      "minItems": 1,
+      "title": "Levels",
+      "type": "array"
+    },
+    "provenance": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Provenance"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "warnings": {
+      "items": {
+        "$ref": "#/$defs/Warning"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "scale",
+    "levels"
+  ],
+  "title": "FloorPlanIR",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teknardo.dev/schemas/floorplan-ir-1.0.0.json"
+}

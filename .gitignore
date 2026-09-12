@@ -1,0 +1,39 @@
+# deps
+node_modules/
+.pnp.*
+.yarn/
+
+# next
+.next/
+out/
+build/
+dist/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# env
+.env
+.env.local
+.env*.local
+
+# runtime data
+storage/
+apps/cv/storage/
+*.glb.tmp
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# local toolchain workarounds (C: was full; npm cache redirected here)
+.npm-cache/
