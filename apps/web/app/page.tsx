@@ -181,6 +181,7 @@ export default function Home() {
           {status === "ready" && ir && tab === "model" && (
             <Viewer3D
               ir={ir}
+              imageUrl={imageUrl}
               selectedWallId={selectedWallId}
               onSelectWall={setSelectedWallId}
             />

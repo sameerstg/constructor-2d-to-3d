@@ -31,7 +31,7 @@ from app.ir import (
 )
 from app.main import app
 from app.recognize.base import RecognizerError
-from app.recognize.opencv_v1 import detect_rooms
+from app.recognize.opencv_v1 import _binarize, detect_rooms
 from app.recognize.registry import get_recognizer
 from app.recognize.skeleton import cluster_coordinates, merge_collinear, snap_to_axes
 from app.sources import SourceDocument
@@ -436,3 +436,42 @@ def test_hairline_linework_is_reported_not_silently_guessed():
     warning = next(w for w in ir.warnings if w.code == "hairline_linework")
     assert warning.severity is Severity.ERROR
     assert "DXF" in warning.message
+
+
+def test_grey_linework_is_not_thrown_away_with_the_paper():
+    """Otsu assumes a bimodal histogram; a real plan is trimodal.
+
+    White paper, mid-grey secondary linework, black primary linework. Otsu
+    splits the extremes and discards the middle — which on a real drawing
+    deleted the light-grey OUTER walls, leaving gaps far wider than a doorway so
+    the whole interior merged with the outdoors and every large room vanished.
+    """
+    image = np.full((600, 800, 3), 255, dtype=np.uint8)
+    grey = (165, 165, 165)
+    black = (0, 0, 0)
+
+    # Envelope drawn in grey, interior partition in black — the exact
+    # combination that used to lose the envelope.
+    cv2.rectangle(image, (80, 80), (720, 520), grey, 14)
+    cv2.line(image, (400, 80), (400, 260), black, 14)
+    cv2.line(image, (400, 340), (400, 520), black, 14)
+
+    ink = _binarize(image)
+
+    # The grey envelope must survive thresholding...
+    assert ink[80, 400] > 0, "grey exterior wall was thresholded away"
+    # ...and with it closed, the interior must resolve into rooms rather than
+    # leaking into the exterior component.
+    ir = get_recognizer("opencv").recognize(_as_png(image, "grey.png"))
+    assert len(ir.levels[0].rooms) >= 2
+
+
+def test_solid_black_poche_is_not_mistaken_for_paper():
+    """The paper level is found in the upper half of the histogram on purpose:
+    a plan with heavy filled walls must not have the poche taken for the page."""
+    image = np.full((600, 800, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (60, 60), (740, 540), (0, 0, 0), 60)
+
+    ink = _binarize(image)
+    assert ink[60, 400] > 0          # the wall is ink
+    assert ink[300, 400] == 0        # the room interior is not

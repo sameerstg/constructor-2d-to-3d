@@ -13,8 +13,8 @@
  *     plan (x, y)  ->  world (x, elevation, y)
  */
 
-import { useMemo, useRef } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Grid, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import {
@@ -200,18 +200,154 @@ function SpinLight() {
   return <directionalLight ref={ref} intensity={1.7} castShadow />;
 }
 
+type ViewPreset = "top" | "iso";
+
+/**
+ * The source drawing, laid flat under the model.
+ *
+ * This is the 3D counterpart of the 2D review overlay: it shows the recognised
+ * geometry against the drawing it came from, so a wall in the wrong place is
+ * visible as a wall in the wrong place rather than as a plausible box. It is
+ * also the quickest way to judge whether recognition actually tracked the plan.
+ *
+ * Alignment is not a fudge factor - it falls out of the same mapping the rest of
+ * the viewer uses. IR coordinates are metres and the image is pixels, so the
+ * drawing spans `width / pixelsPerMeter` metres across, anchored at the origin
+ * exactly like the geometry.
+ */
+function PlanUnderlay({
+  imageUrl,
+  ir,
+  level,
+  opacity,
+}: {
+  imageUrl: string;
+  ir: FloorPlanIR;
+  level: Level;
+  opacity: number;
+}) {
+  const [texture, setTexture] = useState<THREE.Texture | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Loaded imperatively rather than with useLoader: that suspends, and a
+    // suspended resource inside <Canvas> blanks the entire viewport until it
+    // resolves. A missing underlay should cost the underlay, not the model.
+    const loader = new THREE.TextureLoader();
+    loader.load(
+      imageUrl,
+      (loaded) => {
+        if (cancelled) {
+          loaded.dispose();
+          return;
+        }
+        loaded.colorSpace = THREE.SRGBColorSpace;
+        loaded.anisotropy = 8;
+        setTexture(loaded);
+      },
+      undefined,
+      () => setTexture(null),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [imageUrl]);
+
+  useEffect(() => () => texture?.dispose(), [texture]);
+
+  if (!texture || !ir.source) return null;
+
+  const ppm = ir.scale.pixelsPerMeter;
+  const width = ir.source.width / ppm;
+  const height = ir.source.height / ppm;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0) return null;
+
+  // A plane is built in XY and laid flat by a -90 degree rotation about X, which
+  // sends local (u, v) to world (u, 0, -v). Centring it at (w/2, _, h/2) puts
+  // its corner on the origin, matching the plan's own normalised frame. The
+  // texture's v=1 edge lands at world z minimum, which is plan y = 0 - the top
+  // row of the image - so the drawing is not mirrored.
+  return (
+    <mesh
+      position={[width / 2, level.elevation + 0.004, height / 2]}
+      rotation={[-Math.PI / 2, 0, 0]}
+      renderOrder={-1}
+    >
+      <planeGeometry args={[width, height]} />
+      <meshBasicMaterial
+        map={texture}
+        transparent
+        opacity={opacity}
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </mesh>
+  );
+}
+
+/**
+ * Drives the camera from a view preset.
+ *
+ * `<Canvas camera={...}>` only applies on mount, so switching views has to be
+ * imperative. Top-down is the default because it is the view that can be
+ * checked against the drawing - a perspective view looks impressive and hides
+ * exactly the errors a reviewer is here to find.
+ */
+function CameraRig({
+  view,
+  center,
+  span,
+}: {
+  view: ViewPreset;
+  center: [number, number];
+  span: number;
+}) {
+  const { camera, controls } = useThree();
+
+  useEffect(() => {
+    const [cx, cz] = center;
+    if (view === "top") {
+      // Not exactly overhead: a camera looking straight down its own up-axis is
+      // degenerate, and OrbitControls tumbles on the first drag.
+      camera.position.set(cx, span * 1.5, cz + span * 0.001);
+    } else {
+      camera.position.set(cx + span * 0.85, span * 0.8, cz + span * 0.85);
+    }
+    camera.lookAt(cx, 0, cz);
+    camera.updateProjectionMatrix();
+
+    const orbit = controls as unknown as
+      | { target: THREE.Vector3; update: () => void }
+      | undefined;
+    if (orbit?.target) {
+      orbit.target.set(cx, view === "top" ? 0 : 1.2, cz);
+      orbit.update();
+    }
+  }, [view, center, span, camera, controls]);
+
+  return null;
+}
+
+
 export default function Viewer3D({
   ir,
+  imageUrl,
   levelIndex = 0,
   selectedWallId,
   onSelectWall,
 }: {
   ir: FloorPlanIR;
+  /** Source drawing to lay under the model. Null for vector input. */
+  imageUrl?: string | null;
   levelIndex?: number;
   selectedWallId?: string | null;
   onSelectWall?: (id: string) => void;
 }) {
   const level = ir.levels[levelIndex];
+  // Top-down by default: it is the only view that can be checked against the
+  // drawing underneath, which is what this screen is for.
+  const [view, setView] = useState<ViewPreset>("top");
+  const [underlay, setUnderlay] = useState(0.85);
 
   const { center, size } = useMemo(() => planBounds(level), [level]);
   const span = Math.max(size[0], size[1], 4);
@@ -227,10 +363,11 @@ export default function Viewer3D({
   }, [level.openings]);
 
   return (
+    <div className="relative h-full w-full">
     <Canvas
       shadows
       dpr={[1, 2]}
-      camera={{ position: [center[0] + span * 0.9, span * 0.85, center[1] + span * 0.9], fov: 45 }}
+      camera={{ position: [center[0], span * 1.5, center[1] + span * 0.001], fov: 45 }}
       className="h-full w-full"
     >
       <color attach="background" args={["#11131a"]} />
@@ -246,6 +383,12 @@ export default function Viewer3D({
       <SpinLight />
       <directionalLight position={[-10, 9, -8]} intensity={0.45} />
 
+      <CameraRig view={view} center={center} span={span} />
+
+      {imageUrl && underlay > 0 && (
+        <PlanUnderlay imageUrl={imageUrl} ir={ir} level={level} opacity={underlay} />
+      )}
+
       <group>
         {level.walls.map((wall) => (
           <WallMesh
@@ -257,9 +400,10 @@ export default function Viewer3D({
             onSelect={onSelectWall}
           />
         ))}
-        {level.rooms.map((room) => (
-          <FloorMesh key={room.id} room={room} level={level} />
-        ))}
+        {/* The floors are opaque and would bury the drawing, and the drawing
+            is the more informative surface while reviewing. */}
+        {!(imageUrl && underlay > 0) &&
+          level.rooms.map((room) => <FloorMesh key={room.id} room={room} level={level} />)}
       </group>
 
       <Grid
@@ -275,7 +419,39 @@ export default function Viewer3D({
         infiniteGrid={false}
       />
 
-      <OrbitControls target={[center[0], 1.2, center[1]]} makeDefault enableDamping />
+      <OrbitControls target={[center[0], 0, center[1]]} makeDefault enableDamping />
     </Canvas>
+
+      <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap items-center gap-2">
+        <div className="pointer-events-auto flex gap-1 rounded-lg bg-black/60 p-1 backdrop-blur">
+          {(["top", "iso"] as const).map((preset) => (
+            <button
+              key={preset}
+              onClick={() => setView(preset)}
+              className={`rounded px-2.5 py-1 text-xs font-medium transition ${
+                view === preset ? "bg-white/20 text-white" : "text-neutral-400 hover:text-white"
+              }`}
+            >
+              {preset === "top" ? "Top" : "3D"}
+            </button>
+          ))}
+        </div>
+
+        {imageUrl && (
+          <label className="pointer-events-auto flex items-center gap-2 rounded-lg bg-black/60 px-2.5 py-1.5 text-xs text-neutral-300 backdrop-blur">
+            Plan
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={underlay}
+              onChange={(event) => setUnderlay(Number(event.target.value))}
+              className="h-1 w-20 accent-sky-400"
+            />
+          </label>
+        )}
+      </div>
+    </div>
   );
 }

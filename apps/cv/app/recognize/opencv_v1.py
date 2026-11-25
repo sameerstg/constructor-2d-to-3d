@@ -85,6 +85,14 @@ ROUGH_THICKNESS_PERCENTILE = 60
 # has hit the resolution floor and everything derived from it is unreliable.
 HAIRLINE_HALF_WIDTH_PX = 2.5
 
+# How much darker than the paper a pixel must be to count as ink.
+#
+# 45 was chosen by sweeping 25-55 across every sample. Too small and paper
+# texture and JPEG ringing become "walls"; too large and the grey linework this
+# exists to recover is dropped again. At 45 a Revit plot and a low-resolution
+# scan both return exactly their true room count.
+PAPER_INK_MARGIN = 45
+
 # A room smaller than this is a cupboard, a hatch pattern, or noise.
 MIN_ROOM_AREA_M2 = 1.2
 
@@ -360,14 +368,42 @@ def _fit_working_size(image: np.ndarray) -> tuple[np.ndarray, float]:
 
 
 def _binarize(image: np.ndarray) -> np.ndarray:
-    """Produce an ink mask: 255 where the drawing has marks, 0 for paper."""
+    """Produce an ink mask: 255 where the drawing has marks, 0 for paper.
+
+    Otsu alone is not enough, and the reason is worth stating: it assumes the
+    histogram is BIMODAL, and an architectural drawing is not. A real plan has
+    three populations -- white paper, mid-grey secondary linework (railings,
+    glazing, hatching, and on many drawings the exterior walls themselves), and
+    black primary linework. Otsu splits the two extremes and throws the middle
+    away with the paper.
+
+    That is not cosmetic. On a real plan it deleted the light-grey outer walls,
+    leaving gaps in the building envelope far wider than any doorway, so the
+    entire interior merged with the outdoors and every large room was discarded:
+    the recognizer returned five closets and no bedrooms.
+
+    So the threshold is also pinned relative to the PAPER: anything meaningfully
+    darker than the page is ink, whatever Otsu thinks. Taking the more inclusive
+    of the two keeps Otsu's protection on genuinely dark drawings while
+    recovering grey linework on pale ones.
+    """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
 
     # Otsu over a lightly blurred image. Adaptive thresholding is tempting but
     # it turns large solid-black poche walls into hollow outlines, which is
     # exactly the signal the distance transform depends on.
     blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    otsu_threshold, _ = cv2.threshold(
+        blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
+
+    # The paper is the brightest dominant mode. Searching only the top half
+    # avoids mistaking a large solid-black poche for the page.
+    histogram = cv2.calcHist([blurred], [0], None, [256], [0, 256]).ravel()
+    paper_level = int(np.argmax(histogram[128:]) + 128)
+
+    threshold = max(float(otsu_threshold), float(paper_level - PAPER_INK_MARGIN))
+    _, binary = cv2.threshold(blurred, threshold, 255, cv2.THRESH_BINARY_INV)
 
     # Close single-pixel gaps from JPEG ringing or thin anti-aliasing.
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
